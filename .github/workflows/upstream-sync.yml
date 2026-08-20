@@ -1,0 +1,53 @@
+name: Propose Upstream Sync
+
+on:
+  schedule:
+    - cron: '15 1 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: new-api-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge upstream into proposal branch
+        id: sync
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/QuantumNous/new-api.git
+          git fetch --no-tags upstream main
+          git switch --force-create automation/upstream-sync origin/main
+          git merge --no-edit upstream/main
+          if git diff --quiet origin/main...HEAD; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git push --force origin HEAD:refs/heads/automation/upstream-sync
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
+      - name: Publish review link
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          {
+            echo '## Upstream update ready for review'
+            echo
+            echo '[Create the upstream sync pull request](https://github.com/Slothwatching/new-api/compare/main...automation/upstream-sync?expand=1)'
+            echo
+            echo 'Review the upstream changes and repository CI before merging. Azure Test deploys only after the pull request reaches `main`.'
+          } >> "$GITHUB_STEP_SUMMARY"
