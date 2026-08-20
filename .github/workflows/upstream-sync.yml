@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: new-api-upstream-sync
@@ -41,52 +40,14 @@ jobs:
           git push --force origin HEAD:refs/heads/automation/upstream-sync
           echo 'changed=true' >> "$GITHUB_OUTPUT"
 
-      - name: Create or refresh review pull request
+      - name: Publish review link
         if: steps.sync.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          existing_pr=$(gh pr list \
-            --base main \
-            --head automation/upstream-sync \
-            --state open \
-            --json number \
-            --jq '.[0].number')
-          if [ -n "$existing_pr" ]; then
-            gh pr edit "$existing_pr" --title 'chore: sync QuantumNous upstream main'
-            exit 0
-          fi
-          sync_pr_body=$(cat <<'EOF'
-          ## 📝 变更描述 / Description
-          定期同步 QuantumNous/new-api 的 upstream/main。本 PR 由自动化创建，必须通过现有 CI 并由仓库所有者检查后才能合并；合并 main 后才会部署 Azure Test。
-
-          这是自动化生成的上游同步 PR，不声明人工独立创作。
-
-          ## 🚀 变更类型 / Type of change
-          - [ ] 🐛 Bug 修复 (Bug fix)
-          - [ ] ✨ 新功能 (New feature)
-          - [x] ⚡ 性能优化 / 重构 (Refactor)
-          - [ ] 📝 文档更新 (Documentation)
-
-          ## 🔗 关联任务 / Related Issue
-          - 上游同步，无本地 Issue
-
-          ## ✅ 提交前检查项 / Checklist
-          - [ ] **人工确认:** 合并前由仓库所有者完成检查。
-          - [x] **非重复提交:** 自动化复用同一条 open PR。
-          - [x] **Bug fix 说明:** 本 PR 不将同步内容统一归类为 Bug fix。
-          - [ ] **变更理解:** 合并前由仓库所有者确认上游变化与影响。
-          - [x] **范围聚焦:** 仅包含 upstream/main 与当前 fork main 的合并结果。
-          - [x] **本地验证:** 由本 PR 的 GitHub Actions 执行。
-          - [x] **安全合规:** 不包含 Azure 或业务凭据。
-
-          ## 📸 运行证明 / Proof of Work
-          以本 PR Checks 中的后端、前端与质量检查结果为准。
-          EOF
-          )
-          gh pr create \
-            --base main \
-            --head automation/upstream-sync \
-            --title 'chore: sync QuantumNous upstream main' \
-            --body "$sync_pr_body"
+          {
+            echo '## Upstream update ready for review'
+            echo
+            echo '[Create the upstream sync pull request](https://github.com/Slothwatching/new-api/compare/main...automation/upstream-sync?expand=1)'
+            echo
+            echo 'Review the upstream changes and repository CI before merging. Azure Test deploys only after the pull request reaches `main`.'
+          } >> "$GITHUB_STEP_SUMMARY"
