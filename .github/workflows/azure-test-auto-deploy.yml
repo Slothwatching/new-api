@@ -62,6 +62,7 @@ jobs:
           bun run test
 
   build-and-deploy:
+    if: github.ref == 'refs/heads/main'
     needs: [backend, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 30
