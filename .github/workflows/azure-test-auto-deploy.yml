@@ -115,12 +115,34 @@ jobs:
           IMAGE_REF: ghcr.io/slothwatching/new-api@${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
-          message=$(az vm run-command invoke \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --name "${{ vars.AZURE_VM_NAME }}" \
-            --command-id RunShellScript \
-            --scripts "sudo /srv/ai-gateway/current/scripts/deploy-component.sh new-api '$IMAGE_REF' '$GITHUB_SHA'" \
-            --query 'value[0].message' \
-            --output tsv)
+          # Azure allows one Run Command per VM. Three repositories deploy to the
+          # same VM with no shared lock, so overlapping deployments collide. A
+          # Conflict means the script never started, and the host-side flock in
+          # deploy-component.sh fails a genuine double-start closed.
+          attempt=1
+          max_attempts=8
+          error_log=$(mktemp)
+          while :; do
+            if message=$(az vm run-command invoke \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${{ vars.AZURE_VM_NAME }}" \
+              --command-id RunShellScript \
+              --scripts "sudo /srv/ai-gateway/current/scripts/deploy-component.sh new-api '$IMAGE_REF' '$GITHUB_SHA'" \
+              --query 'value[0].message' \
+              --output tsv 2>"$error_log"); then
+              break
+            fi
+            if [ "$attempt" -ge "$max_attempts" ] ||
+              ! grep -q 'Run command extension execution is in progress' "$error_log"; then
+              cat "$error_log" >&2
+              exit 1
+            fi
+            delay=$((attempt * 20))
+            printf 'Run Command is busy on the VM; retrying in %ss (attempt %s of %s).\n' \
+              "$delay" "$attempt" "$max_attempts" >&2
+            sleep "$delay"
+            attempt=$((attempt + 1))
+          done
+          rm -f "$error_log"
           printf '%s\n' "$message"
           printf '%s\n' "$message" | grep -F 'component_deployment=passed component=new-api'
