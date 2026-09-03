@@ -1,4 +1,4 @@
-name: Build and Deploy Azure Test
+name: Build Azure Test Candidate
 
 on:
   push:
@@ -61,7 +61,7 @@ jobs:
           bun run typecheck
           bun run test
 
-  build-and-deploy:
+  build-and-publish:
     if: github.ref == 'refs/heads/main'
     needs: [backend, frontend]
     runs-on: ubuntu-latest
@@ -70,7 +70,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -93,7 +92,7 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/slothwatching/new-api:test-${{ github.sha }}
+            ghcr.io/slothwatching/new-api:test-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
             ghcr.io/slothwatching/new-api:test-latest
           labels: |
             org.opencontainers.image.source=https://github.com/Slothwatching/new-api
@@ -103,46 +102,17 @@ jobs:
           provenance: mode=max
           sbom: true
 
-      - name: Log in to Azure with source deployment identity
-        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Deploy digest and verify gateway
+      - name: Publish candidate summary
         env:
           IMAGE_REF: ghcr.io/slothwatching/new-api@${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
-          # Azure allows one Run Command per VM. Three repositories deploy to the
-          # same VM with no shared lock, so overlapping deployments collide. A
-          # Conflict means the script never started, and the host-side flock in
-          # deploy-component.sh fails a genuine double-start closed.
-          attempt=1
-          max_attempts=8
-          error_log=$(mktemp)
-          while :; do
-            if message=$(az vm run-command invoke \
-              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-              --name "${{ vars.AZURE_VM_NAME }}" \
-              --command-id RunShellScript \
-              --scripts "sudo /srv/ai-gateway/current/scripts/deploy-component.sh new-api '$IMAGE_REF' '$GITHUB_SHA'" \
-              --query 'value[0].message' \
-              --output tsv 2>"$error_log"); then
-              break
-            fi
-            if [ "$attempt" -ge "$max_attempts" ] ||
-              ! grep -q 'Run command extension execution is in progress' "$error_log"; then
-              cat "$error_log" >&2
-              exit 1
-            fi
-            delay=$((attempt * 20))
-            printf 'Run Command is busy on the VM; retrying in %ss (attempt %s of %s).\n' \
-              "$delay" "$attempt" "$max_attempts" >&2
-            sleep "$delay"
-            attempt=$((attempt + 1))
-          done
-          rm -f "$error_log"
-          printf '%s\n' "$message"
-          printf '%s\n' "$message" | grep -F 'component_deployment=passed component=new-api'
+          {
+            echo '## Azure Test candidate'
+            echo
+            echo "- Source commit: \`$GITHUB_SHA\`"
+            echo "- Immutable image: \`$IMAGE_REF\`"
+            echo "- Candidate tag: \`test-$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\`"
+            echo
+            echo 'The private deployment repository will verify and promote this candidate before Azure deployment.'
+          } >> "$GITHUB_STEP_SUMMARY"
